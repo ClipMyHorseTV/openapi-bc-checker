@@ -1,0 +1,15 @@
+/vendor/
+/.phpunit.cache/
+/composer.lock
+/.claude/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# PHAR build artifacts
+*.phar
+*.phar.gz
+/.box_dump/

@@ -1,0 +1,38 @@
+{
+    "main": "bin/openapi-bc-checker",
+    "output": "openapi-bc-checker.phar",
+    "chmod": "0755",
+    "compression": "GZ",
+    "directories": [
+        "src"
+    ],
+    "files": [
+        "LICENSE"
+    ],
+    "finder": [
+        {
+            "name": ["*.php", "*.json"],
+            "exclude": [
+                "tests",
+                "Tests",
+                "test",
+                "Test"
+            ],
+            "in": "vendor"
+        }
+    ],
+    "directories-bin": [
+        "vendor/symfony/console/Resources"
+    ],
+    "stub": true,
+    "banner": [
+        "This file is part of the OpenAPI BC Checker.",
+        "",
+        "Copyright (c) 2025 ClipMyHorse.TV Services & Development GmbH",
+        "",
+        "For the full copyright and license information, please view",
+        "the LICENSE file that was distributed with this source code.",
+        "",
+        "@license MIT"
+    ]
+}

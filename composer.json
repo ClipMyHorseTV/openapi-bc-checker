@@ -1,0 +1,44 @@
+{
+    "name": "clipmyhorse/openapi-bc-checker",
+    "description": "OpenAPI Backward Compatibility Checker",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "ClipMyHorse\\OpenApi\\BcChecker\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ClipMyHorse\\OpenApi\\BcChecker\\Tests\\": "tests/"
+        }
+    },
+    "require": {
+        "php": "^8.1",
+        "symfony/console": "^6.0|^7.0",
+        "symfony/yaml": "^6.0|^7.0",
+        "symfony/process": "^6.0|^7.0",
+        "cebe/php-openapi": "^1.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0",
+        "phpstan/phpstan": "^1.10",
+        "squizlabs/php_codesniffer": "^3.7",
+        "humbug/box": "^4.6"
+    },
+    "bin": [
+        "bin/openapi-bc-checker"
+    ],
+    "scripts": {
+        "test": "phpunit",
+        "phpstan": "phpstan analyse",
+        "phpcs": "phpcs",
+        "phpcbf": "phpcbf",
+        "build-phar": "box compile",
+        "check": [
+            "@phpcs",
+            "@phpstan",
+            "@test"
+        ]
+    }
+}

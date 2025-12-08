@@ -1,0 +1,46 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * This file is part of the OpenAPI BC Checker.
+ *
+ * Copyright (c) 2025 ClipMyHorse.TV Services & Development GmbH
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ *
+ * @license MIT
+ */
+
+declare(strict_types=1);
+
+use ClipMyHorse\OpenApi\BcChecker\Command\CheckBcCommand;
+use Symfony\Component\Console\Application;
+
+$autoloadPaths = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+$autoloadLoaded = false;
+foreach ($autoloadPaths as $autoloadPath) {
+    if (file_exists($autoloadPath)) {
+        require_once $autoloadPath;
+        $autoloadLoaded = true;
+        break;
+    }
+}
+
+if (!$autoloadLoaded) {
+    fwrite(
+        STDERR,
+        'Error: Unable to find the Composer autoloader. ' .
+        'Please run "composer install" before using this tool.' . PHP_EOL
+    );
+    exit(1);
+}
+
+$application = new Application('OpenAPI BC Checker', '1.0.0');
+$application->add(new CheckBcCommand());
+$application->setDefaultCommand('check:bc', true);
+$application->run();

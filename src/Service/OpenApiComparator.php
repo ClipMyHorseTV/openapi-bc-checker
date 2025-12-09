@@ -15,425 +15,169 @@ declare(strict_types=1);
 
 namespace ClipMyHorse\OpenApi\BcChecker\Service;
 
-use cebe\openapi\DocumentContextInterface;
-use cebe\openapi\Reader;
 use cebe\openapi\spec\OpenApi;
-use cebe\openapi\spec\Operation;
-use cebe\openapi\spec\Parameter;
 use cebe\openapi\spec\PathItem;
-use cebe\openapi\spec\Reference;
-use cebe\openapi\spec\RequestBody;
-use cebe\openapi\spec\Schema;
 use ClipMyHorse\OpenApi\BcChecker\Exception\BcBreakException;
+use ClipMyHorse\OpenApi\BcChecker\Model\ChangeSet;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\DocumentationComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\EndpointComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\ParameterComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\PathFormatter;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\PathIterator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\RequestBodyComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\ResponseComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\SchemaComparator;
+use ClipMyHorse\OpenApi\BcChecker\Service\Comparator\SpecParser;
 
 class OpenApiComparator
 {
+    private readonly SpecParser $specParser;
+    private readonly PathFormatter $pathFormatter;
+    private readonly PathIterator $pathIterator;
+    private readonly EndpointComparator $endpointComparator;
+    private readonly ParameterComparator $parameterComparator;
+    private readonly ResponseComparator $responseComparator;
+    private readonly RequestBodyComparator $requestBodyComparator;
+    private readonly SchemaComparator $schemaComparator;
+    private readonly DocumentationComparator $documentationComparator;
+
+    public function __construct(
+        ?SpecParser $specParser = null,
+        ?PathFormatter $pathFormatter = null,
+        ?PathIterator $pathIterator = null,
+        ?EndpointComparator $endpointComparator = null,
+        ?ParameterComparator $parameterComparator = null,
+        ?ResponseComparator $responseComparator = null,
+        ?RequestBodyComparator $requestBodyComparator = null,
+        ?SchemaComparator $schemaComparator = null,
+        ?DocumentationComparator $documentationComparator = null
+    ) {
+        $this->specParser = $specParser ?? new SpecParser();
+        $this->pathFormatter = $pathFormatter ?? new PathFormatter();
+        $this->pathIterator = $pathIterator ?? new PathIterator();
+        
+        $this->endpointComparator = $endpointComparator ?? new EndpointComparator(
+            $this->pathIterator,
+            $this->pathFormatter
+        );
+        
+        $this->parameterComparator = $parameterComparator ?? new ParameterComparator(
+            $this->pathFormatter
+        );
+        
+        $this->responseComparator = $responseComparator ?? new ResponseComparator(
+            $this->pathFormatter
+        );
+        
+        $this->requestBodyComparator = $requestBodyComparator ?? new RequestBodyComparator(
+            $this->pathFormatter
+        );
+        
+        $this->schemaComparator = $schemaComparator ?? new SchemaComparator(
+            $this->pathFormatter
+        );
+        
+        $this->documentationComparator = $documentationComparator ?? new DocumentationComparator(
+            $this->pathIterator,
+            $this->pathFormatter
+        );
+    }
+
     /**
-     * @return array<string>
+     * @return array{major: array<string>, minor: array<string>, patch: array<string>}
      * @throws BcBreakException
      */
     public function compare(string $oldSpec, string $newSpec): array
     {
-        $oldOpenApi = $this->parseSpec($oldSpec);
-        $newOpenApi = $this->parseSpec($newSpec);
+        $oldOpenApi = $this->specParser->parse($oldSpec);
+        $newOpenApi = $this->specParser->parse($newSpec);
 
-        $breaks = [];
+        $changeSet = new ChangeSet();
 
-        $breaks = array_merge($breaks, $this->compareEndpoints($oldOpenApi, $newOpenApi));
-        $breaks = array_merge($breaks, $this->compareSchemas($oldOpenApi, $newOpenApi));
+        // Detect MAJOR breaking changes
+        $changeSet->merge($this->endpointComparator->detectRemovedEndpoints($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->endpointComparator->detectRemovedOperations($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->compareOperationDetails($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->schemaComparator->detectSchemaBreaks($oldOpenApi, $newOpenApi));
 
-        return $breaks;
+        // Detect MINOR additions (backward compatible)
+        $changeSet->merge($this->endpointComparator->detectNewEndpoints($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->endpointComparator->detectNewOperations($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->detectNewOperationDetails($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->schemaComparator->detectNewSchemas($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->schemaComparator->detectNewProperties($oldOpenApi, $newOpenApi));
+
+        // Detect PATCH changes (documentation/metadata)
+        $changeSet->merge($this->documentationComparator->detectDocumentationChanges($oldOpenApi, $newOpenApi));
+        $changeSet->merge($this->documentationComparator->detectExampleChanges($oldOpenApi, $newOpenApi));
+
+        return $changeSet->toArray();
     }
 
     /**
-     * @throws BcBreakException
+     * Compare operation details (parameters, responses, request bodies) for breaking changes.
      */
-    private function parseSpec(string $content): OpenApi
+    private function compareOperationDetails(OpenApi $old, OpenApi $new): ChangeSet
     {
-        try {
-            if ($this->isJson($content)) {
-                return Reader::readFromJson($content);
-            }
-
-            return Reader::readFromYaml($content);
-        } catch (\Throwable $e) {
-            throw new BcBreakException(
-                sprintf('Failed to parse OpenAPI spec: %s', $e->getMessage()),
-                0,
-                $e
-            );
-        }
-    }
-
-    private function isJson(string $content): bool
-    {
-        json_decode($content);
-        return json_last_error() === JSON_ERROR_NONE;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareEndpoints(OpenApi $old, OpenApi $new): array
-    {
-        $breaks = [];
+        $changeSet = new ChangeSet();
 
         if ($old->paths === null || $new->paths === null) {
-            return $breaks;
+            return $changeSet;
         }
 
-        foreach ($old->paths as $path => $pathItem) {
+        $this->pathIterator->iteratePaths($old, function (string $path, PathItem $oldPathItem) use ($new, $changeSet) {
             if (!isset($new->paths[$path])) {
-                $docPath = $this->formatPath($pathItem, $this->buildPath('paths', $path));
-                $breaks[] = sprintf('Endpoint removed: %s (at: %s)', $path, $docPath);
-                continue;
+                return;
             }
 
-            /** @var PathItem $oldPathItem */
-            $oldPathItem = $pathItem;
             /** @var PathItem $newPathItem */
             $newPathItem = $new->paths[$path];
 
-            $breaks = array_merge(
-                $breaks,
-                $this->compareOperations($path, $oldPathItem, $newPathItem)
-            );
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareOperations(string $path, PathItem $old, PathItem $new): array
-    {
-        $breaks = [];
-        $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
-
-        foreach ($methods as $method) {
-            $oldOperation = $old->$method;
-            $newOperation = $new->$method;
-
-            if ($oldOperation !== null && $newOperation === null) {
-                $docPath = $this->formatPath($oldOperation, $this->buildPath('paths', $path, $method));
-                $breaks[] = sprintf('Operation removed: %s %s (at: %s)', strtoupper($method), $path, $docPath);
-                continue;
-            }
-
-            if ($oldOperation === null || $newOperation === null) {
-                continue;
-            }
-
-            $breaks = array_merge(
-                $breaks,
-                $this->compareParameters($path, $method, $oldOperation, $newOperation)
-            );
-
-            $breaks = array_merge(
-                $breaks,
-                $this->compareResponses($path, $method, $oldOperation, $newOperation)
-            );
-
-            $breaks = array_merge(
-                $breaks,
-                $this->compareRequestBody($path, $method, $oldOperation, $newOperation)
-            );
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareParameters(string $path, string $method, Operation $old, Operation $new): array
-    {
-        $breaks = [];
-
-        if ($old->parameters === null) {
-            return $breaks;
-        }
-
-        foreach ($old->parameters as $oldParam) {
-            if ($oldParam instanceof Reference) {
-                continue;
-            }
-
-            assert($oldParam instanceof Parameter);
-            $found = false;
-
-            if ($new->parameters !== null) {
-                foreach ($new->parameters as $newParam) {
-                    if ($newParam instanceof Reference) {
-                        continue;
-                    }
-
-                    assert($newParam instanceof Parameter);
-
-                    if ($oldParam->name === $newParam->name && $oldParam->in === $newParam->in) {
-                        $found = true;
-
-                        if ($oldParam->required === false && $newParam->required === true) {
-                            $docPath = $this->formatPath(
-                                $newParam,
-                                $this->buildPath('paths', $path, $method, 'parameters')
-                            );
-                            $breaks[] = sprintf(
-                                'Parameter became required: %s %s -> %s (%s) (at: %s)',
-                                strtoupper($method),
-                                $path,
-                                $oldParam->name,
-                                $oldParam->in,
-                                $docPath
-                            );
-                        }
-
-                        break;
-                    }
+            $this->pathIterator->iterateOperations($oldPathItem, function (string $method, $oldOperation) use ($newPathItem, $path, $changeSet) {
+                $newOperation = $newPathItem->$method;
+                if ($newOperation === null) {
+                    return;
                 }
-            }
 
-            if (!$found && $oldParam->required === true) {
-                $docPath = $this->formatPath(
-                    $oldParam,
-                    $this->buildPath('paths', $path, $method, 'parameters')
-                );
-                $breaks[] = sprintf(
-                    'Required parameter removed: %s %s -> %s (%s) (at: %s)',
-                    strtoupper($method),
-                    $path,
-                    $oldParam->name,
-                    $oldParam->in,
-                    $docPath
-                );
-            }
-        }
+                $changeSet->merge($this->parameterComparator->detectParameterBreaks($oldOperation, $newOperation, $path, $method));
+                $changeSet->merge($this->responseComparator->detectRemovedResponses($oldOperation, $newOperation, $path, $method));
+                $changeSet->merge($this->requestBodyComparator->detectRequestBodyBreaks($oldOperation, $newOperation, $path, $method));
+            });
+        });
 
-        return $breaks;
+        return $changeSet;
     }
 
     /**
-     * @return array<string>
+     * Detect new operation details (parameters, responses) for minor version changes.
      */
-    private function compareResponses(string $path, string $method, Operation $old, Operation $new): array
+    private function detectNewOperationDetails(OpenApi $old, OpenApi $new): ChangeSet
     {
-        $breaks = [];
+        $changeSet = new ChangeSet();
 
-        if ($old->responses === null) {
-            return $breaks;
+        if ($old->paths === null || $new->paths === null) {
+            return $changeSet;
         }
 
-        foreach ($old->responses as $statusCode => $oldResponse) {
-            if ($new->responses === null || !isset($new->responses[$statusCode])) {
-                $docPath = $this->formatPath(
-                    $oldResponse,
-                    $this->buildPath('paths', $path, $method, 'responses', (string)$statusCode)
-                );
-                $breaks[] = sprintf(
-                    'Response removed: %s %s -> %s (at: %s)',
-                    strtoupper($method),
-                    $path,
-                    $statusCode,
-                    $docPath
-                );
-            }
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareRequestBody(string $path, string $method, Operation $old, Operation $new): array
-    {
-        $breaks = [];
-
-        if ($old->requestBody === null) {
-            return $breaks;
-        }
-
-        if ($old->requestBody instanceof Reference) {
-            return $breaks;
-        }
-
-        assert($old->requestBody instanceof RequestBody);
-
-        if ($new->requestBody === null) {
-            if ($old->requestBody->required === true) {
-                $docPath = $this->formatPath(
-                    $old->requestBody,
-                    $this->buildPath('paths', $path, $method, 'requestBody')
-                );
-                $breaks[] = sprintf(
-                    'Required request body removed: %s %s (at: %s)',
-                    strtoupper($method),
-                    $path,
-                    $docPath
-                );
-            }
-            return $breaks;
-        }
-
-        if ($new->requestBody instanceof Reference) {
-            return $breaks;
-        }
-
-        assert($new->requestBody instanceof RequestBody);
-
-        if ($old->requestBody->required === false && $new->requestBody->required === true) {
-            $docPath = $this->formatPath(
-                $new->requestBody,
-                $this->buildPath('paths', $path, $method, 'requestBody')
-            );
-            $breaks[] = sprintf(
-                'Request body became required: %s %s (at: %s)',
-                strtoupper($method),
-                $path,
-                $docPath
-            );
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareSchemas(OpenApi $old, OpenApi $new): array
-    {
-        $breaks = [];
-
-        if (
-            $old->components === null ||
-            $old->components->schemas === null ||
-            $new->components === null ||
-            $new->components->schemas === null
-        ) {
-            return $breaks;
-        }
-
-        foreach ($old->components->schemas as $schemaName => $oldSchema) {
-            if (!isset($new->components->schemas[$schemaName])) {
-                $docPath = $this->formatPath(
-                    $oldSchema,
-                    $this->buildPath('components', 'schemas', (string)$schemaName)
-                );
-                $breaks[] = sprintf('Schema removed: %s (at: %s)', $schemaName, $docPath);
-                continue;
+        $this->pathIterator->iteratePaths($new, function (string $path, PathItem $newPathItem) use ($old, $changeSet) {
+            if (!isset($old->paths[$path])) {
+                return;
             }
 
-            /** @var Schema $newSchema */
-            $newSchema = $new->components->schemas[$schemaName];
-            /** @var Schema $oldSchemaObj */
-            $oldSchemaObj = $oldSchema;
+            /** @var PathItem $oldPathItem */
+            $oldPathItem = $old->paths[$path];
 
-            $breaks = array_merge(
-                $breaks,
-                $this->compareSchemaProperties($schemaName, $oldSchemaObj, $newSchema)
-            );
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function compareSchemaProperties(string $schemaName, Schema $old, Schema $new): array
-    {
-        $breaks = [];
-
-        if ($old->properties === null) {
-            return $breaks;
-        }
-
-        foreach ($old->properties as $propName => $oldProp) {
-            if ($new->properties === null || !isset($new->properties[$propName])) {
-                if (is_array($old->required) && in_array($propName, $old->required, true)) {
-                    $docPath = $this->formatPath(
-                        $oldProp,
-                        $this->buildPath('components', 'schemas', $schemaName, 'properties', (string)$propName)
-                    );
-                    $breaks[] = sprintf(
-                        'Required property removed from schema: %s.%s (at: %s)',
-                        $schemaName,
-                        $propName,
-                        $docPath
-                    );
+            $this->pathIterator->iterateOperations($newPathItem, function (string $method, $newOperation) use ($oldPathItem, $path, $changeSet) {
+                $oldOperation = $oldPathItem->$method;
+                if ($oldOperation === null) {
+                    return;
                 }
-                continue;
-            }
 
-            /** @var Schema $oldPropSchema */
-            $oldPropSchema = $oldProp;
-            /** @var Schema $newPropSchema */
-            $newPropSchema = $new->properties[$propName];
+                $changeSet->merge($this->parameterComparator->detectNewParameters($oldOperation, $newOperation, $path, $method));
+                $changeSet->merge($this->responseComparator->detectNewResponses($oldOperation, $newOperation, $path, $method));
+            });
+        });
 
-            if (
-                $oldPropSchema->type !== null &&
-                $newPropSchema->type !== null &&
-                $oldPropSchema->type !== $newPropSchema->type
-            ) {
-                $docPath = $this->formatPath(
-                    $newPropSchema,
-                    $this->buildPath('components', 'schemas', $schemaName, 'properties', (string)$propName)
-                );
-                $breaks[] = sprintf(
-                    'Property type changed in schema: %s.%s (%s -> %s) (at: %s)',
-                    $schemaName,
-                    $propName,
-                    $oldPropSchema->type,
-                    $newPropSchema->type,
-                    $docPath
-                );
-            }
-        }
-
-        $oldRequired = $old->required ?? [];
-        $newRequired = $new->required ?? [];
-
-        foreach ($newRequired as $requiredProp) {
-            if (!in_array($requiredProp, $oldRequired, true)) {
-                $propPath = $this->buildPath('components', 'schemas', $schemaName, 'properties', $requiredProp);
-                $breaks[] = sprintf(
-                    'Property became required in schema: %s.%s (at: %s)',
-                    $schemaName,
-                    $requiredProp,
-                    $propPath
-                );
-            }
-        }
-
-        return $breaks;
-    }
-
-    /**
-     * Format a document path for display in break messages.
-     * Converts object with DocumentContextInterface to a readable path string.
-     */
-    private function formatPath(mixed $element, string $fallback = ''): string
-    {
-        if ($element instanceof DocumentContextInterface) {
-            $position = $element->getDocumentPosition();
-            if ($position !== null) {
-                $pointer = $position->getPointer();
-                // Convert JSON pointer to readable path (e.g., /paths/~1users/get -> paths./users.get)
-                $readable = str_replace('/', '.', ltrim($pointer, '/'));
-                $readable = str_replace('~1', '/', $readable);
-                $readable = str_replace('~0', '~', $readable);
-                return $readable !== '' ? $readable : 'root';
-            }
-        }
-        return $fallback;
-    }
-
-    /**
-     * Build a path string manually for elements without DocumentContext.
-     */
-    private function buildPath(string ...$parts): string
-    {
-        return implode('.', array_filter($parts));
+        return $changeSet;
     }
 }

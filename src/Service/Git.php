@@ -19,7 +19,7 @@ use ClipMyHorse\OpenApi\BcChecker\Exception\BcBreakException;
 use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Process\Process;
 
-class GitService
+class Git
 {
     /**
      * @throws BcBreakException
@@ -34,14 +34,7 @@ class GitService
         $process->run();
 
         if (!$process->isSuccessful()) {
-            throw new BcBreakException(
-                sprintf(
-                    'Failed to get file "%s" from commit "%s": %s',
-                    $filePath,
-                    $commitId,
-                    $process->getErrorOutput()
-                )
-            );
+            throw BcBreakException::failedToGetFileFromCommit($filePath, $commitId, $process->getErrorOutput());
         }
 
         return $process->getOutput();
@@ -61,13 +54,7 @@ class GitService
         $process->run();
 
         if (!$process->isSuccessful()) {
-            throw new BcBreakException(
-                sprintf(
-                    'Failed to list files in commit "%s": %s',
-                    $commitId,
-                    $process->getErrorOutput()
-                )
-            );
+            throw BcBreakException::failedToListFilesInCommit($commitId, $process->getErrorOutput());
         }
 
         $files = array_filter(
@@ -93,9 +80,8 @@ class GitService
         $process->run();
 
         if (!$process->isSuccessful()) {
-            throw new BcBreakException(
-                sprintf('Invalid commit ID: %s', $commitId)
-            );
+            throw BcBreakException::invalidCommitId($commitId);
         }
     }
 }
+

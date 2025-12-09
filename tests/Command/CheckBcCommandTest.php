@@ -16,7 +16,7 @@ declare(strict_types=1);
 namespace ClipMyHorse\OpenApi\BcChecker\Tests\Command;
 
 use ClipMyHorse\OpenApi\BcChecker\Command\CheckBcCommand;
-use ClipMyHorse\OpenApi\BcChecker\Service\GitService;
+use ClipMyHorse\OpenApi\BcChecker\Service\Git;
 use ClipMyHorse\OpenApi\BcChecker\Service\OpenApiComparator;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Application;
@@ -24,6 +24,9 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 class CheckBcCommandTest extends TestCase
 {
+    private const OLD_FILE = '/old.yaml';
+    private const NEW_FILE = '/new.yaml';
+
     private string $fixturesDir;
 
     protected function setUp(): void
@@ -53,21 +56,10 @@ class CheckBcCommandTest extends TestCase
 
     public function testSuccessWhenNoBcBreaks(): void
     {
-        $oldFile = $this->fixturesDir . '/old.yaml';
-        $newFile = $this->fixturesDir . '/new.yaml';
+        $oldFile = $this->fixturesDir . self::OLD_FILE;
+        $newFile = $this->fixturesDir . self::NEW_FILE;
 
-        $spec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
+        $spec = file_get_contents(__DIR__ . '/../fixtures/identical-spec.yaml');
 
         file_put_contents($oldFile, $spec);
         file_put_contents($newFile, $spec);
@@ -84,46 +76,18 @@ YAML;
 
         $this->assertSame(0, $commandTester->getStatusCode());
         $this->assertStringContainsString(
-            'No backward compatibility breaking changes detected',
+            'No changes detected',
             $commandTester->getDisplay()
         );
     }
 
     public function testFailureWhenBcBreaksDetected(): void
     {
-        $oldFile = $this->fixturesDir . '/old.yaml';
-        $newFile = $this->fixturesDir . '/new.yaml';
+        $oldFile = $this->fixturesDir . self::OLD_FILE;
+        $newFile = $this->fixturesDir . self::NEW_FILE;
 
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-  /products:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
+        $oldSpec = file_get_contents(__DIR__ . '/../fixtures/removed-endpoint-old.yaml');
+        $newSpec = file_get_contents(__DIR__ . '/../fixtures/removed-endpoint-new.yaml');
 
         file_put_contents($oldFile, $oldSpec);
         file_put_contents($newFile, $newSpec);
@@ -144,7 +108,7 @@ YAML;
 
     public function testErrorWhenOldFileNotFound(): void
     {
-        $newFile = $this->fixturesDir . '/new.yaml';
+        $newFile = $this->fixturesDir . self::NEW_FILE;
         file_put_contents($newFile, 'openapi: 3.0.0');
 
         $application = new Application();
@@ -163,7 +127,7 @@ YAML;
 
     public function testErrorWhenNewFileNotFound(): void
     {
-        $oldFile = $this->fixturesDir . '/old.yaml';
+        $oldFile = $this->fixturesDir . self::OLD_FILE;
         file_put_contents($oldFile, 'openapi: 3.0.0');
 
         $application = new Application();
@@ -198,5 +162,57 @@ YAML;
             '--file option is required when using git mode',
             $commandTester->getDisplay()
         );
+    }
+
+    public function testSuccessWhenOnlyMinorChanges(): void
+    {
+        $oldFile = $this->fixturesDir . self::OLD_FILE;
+        $newFile = $this->fixturesDir . self::NEW_FILE;
+
+        $oldSpec = file_get_contents(__DIR__ . '/../fixtures/new-endpoint-old.yaml');
+        $newSpec = file_get_contents(__DIR__ . '/../fixtures/new-endpoint-new.yaml');
+
+        file_put_contents($oldFile, $oldSpec);
+        file_put_contents($newFile, $newSpec);
+
+        $application = new Application();
+        $application->add(new CheckBcCommand());
+
+        $command = $application->find('check:bc');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute([
+            'old' => $oldFile,
+            'new' => $newFile,
+        ]);
+
+        $this->assertSame(0, $commandTester->getStatusCode());
+        $this->assertStringContainsString('MINOR', $commandTester->getDisplay());
+        $this->assertStringContainsString('New endpoint added: /products', $commandTester->getDisplay());
+    }
+
+    public function testSuccessWhenOnlyPatchChanges(): void
+    {
+        $oldFile = $this->fixturesDir . self::OLD_FILE;
+        $newFile = $this->fixturesDir . self::NEW_FILE;
+
+        $oldSpec = file_get_contents(__DIR__ . '/../fixtures/summary-change-old.yaml');
+        $newSpec = file_get_contents(__DIR__ . '/../fixtures/summary-change-new.yaml');
+
+        file_put_contents($oldFile, $oldSpec);
+        file_put_contents($newFile, $newSpec);
+
+        $application = new Application();
+        $application->add(new CheckBcCommand());
+
+        $command = $application->find('check:bc');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute([
+            'old' => $oldFile,
+            'new' => $newFile,
+        ]);
+
+        $this->assertSame(0, $commandTester->getStatusCode());
+        $this->assertStringContainsString('PATCH', $commandTester->getDisplay());
+        $this->assertStringContainsString('Operation summary changed: GET /users', $commandTester->getDisplay());
     }
 }

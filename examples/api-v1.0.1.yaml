@@ -1,0 +1,44 @@
+openapi: 3.0.0
+info:
+  title: Example API
+  version: 1.0.1
+  description: Updated API documentation with clarifications
+paths:
+  /users:
+    get:
+      summary: Get all users from the system
+      description: Returns a list of all users. Use the limit parameter to control pagination.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of users to return
+          schema:
+            type: integer
+            example: 10
+      responses:
+        '200':
+          description: Successfully retrieved users
+  /products:
+    get:
+      summary: Get all available products
+      description: Returns a paginated list of products
+      responses:
+        '200':
+          description: Successfully retrieved products
+components:
+  schemas:
+    User:
+      type: object
+      description: Represents a user in the system
+      properties:
+        id:
+          type: string
+          description: Unique user identifier
+        name:
+          type: string
+          description: Full name of the user
+        email:
+          type: string
+          description: User's email address
+

@@ -19,4 +19,18 @@ use Exception;
 
 class BcBreakException extends Exception
 {
+    public static function invalidCommitId(string $id): self
+    {
+        return new self(sprintf('Invalid commit ID: %s', $id));
+    }
+
+    public static function failedToListFilesInCommit(string $commitId, string $errorOutput): self
+    {
+        return new self(sprintf('Failed to list files in commit "%s": %s', $commitId, $errorOutput));
+    }
+
+    public static function failedToGetFileFromCommit(string $filePath, string $commitId, string $errorOutput): self
+    {
+        return new self(sprintf('Failed to get file "%s" from commit "%s": %s', $filePath, $commitId, $errorOutput));
+    }
 }

@@ -21,6 +21,10 @@ use PHPUnit\Framework\TestCase;
 
 class OpenApiComparatorTest extends TestCase
 {
+    private const FIXTURES_PATH = __DIR__ . '/../fixtures/';
+    private const OLD_SPEC_SUFFIX = '-old.yaml';
+    private const NEW_SPEC_SUFFIX = '-new.yaml';
+
     private OpenApiComparator $comparator;
 
     protected function setUp(): void
@@ -30,271 +34,63 @@ class OpenApiComparatorTest extends TestCase
 
     public function testNoBcBreaksWhenSpecsAreIdentical(): void
     {
-        $spec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
+        $spec = file_get_contents(self::FIXTURES_PATH . 'identical-spec.yaml');
+        $this->assertIsString($spec);
 
-        $breaks = $this->comparator->compare($spec, $spec);
+        $changes = $this->comparator->compare($spec, $spec);
 
-        $this->assertEmpty($breaks);
+        $this->assertEmpty($changes['major']);
+        $this->assertEmpty($changes['minor']);
+        $this->assertEmpty($changes['patch']);
     }
 
-    public function testDetectsRemovedEndpoint(): void
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function majorBreakingChangesProvider(): array
     {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-  /products:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Endpoint removed: /products', $breaks[0]);
+        return [
+            'removed endpoint' => [
+                'removed-endpoint',
+                'Endpoint removed: /products',
+            ],
+            'removed operation' => [
+                'removed-operation',
+                'Operation removed: POST /users',
+            ],
+            'required parameter removed' => [
+                'required-parameter-removed',
+                'Required parameter removed: GET /users -> id (query)',
+            ],
+            'parameter became required' => [
+                'parameter-became-required',
+                'Parameter became required: GET /users -> filter (query)',
+            ],
+            'schema property type changed' => [
+                'schema-property-type-changed',
+                'Property type changed in schema: User.id (string -> integer)',
+            ],
+            'schema property became required' => [
+                'schema-property-became-required',
+                'Property became required in schema: User.email',
+            ],
+        ];
     }
 
-    public function testDetectsRemovedOperation(): void
+    /**
+     * @dataProvider majorBreakingChangesProvider
+     */
+    public function testDetectsMajorBreakingChanges(string $fixturePrefix, string $expectedMessage): void
     {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-    post:
-      responses:
-        '201':
-          description: Created
-YAML;
+        $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
+        $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
+        $changes = $this->comparator->compare($oldSpec, $newSpec);
 
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Operation removed: POST /users', $breaks[0]);
-    }
-
-    public function testDetectsRequiredParameterRemoved(): void
-    {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      parameters:
-        - name: id
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Required parameter removed: GET /users -> id (query)', $breaks[0]);
-    }
-
-    public function testDetectsParameterBecameRequired(): void
-    {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      parameters:
-        - name: filter
-          in: query
-          required: false
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      parameters:
-        - name: filter
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Success
-YAML;
-
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Parameter became required: GET /users -> filter (query)', $breaks[0]);
-    }
-
-    public function testDetectsSchemaPropertyTypeChanged(): void
-    {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths: {}
-components:
-  schemas:
-    User:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths: {}
-components:
-  schemas:
-    User:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-YAML;
-
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Property type changed in schema: User.id (string -> integer)', $breaks[0]);
-    }
-
-    public function testDetectsSchemaPropertyBecameRequired(): void
-    {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths: {}
-components:
-  schemas:
-    User:
-      type: object
-      properties:
-        id:
-          type: string
-        email:
-          type: string
-YAML;
-
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths: {}
-components:
-  schemas:
-    User:
-      type: object
-      required:
-        - email
-      properties:
-        id:
-          type: string
-        email:
-          type: string
-YAML;
-
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertCount(1, $breaks);
-        $this->assertStringContainsString('Property became required in schema: User.email', $breaks[0]);
+        $this->assertCount(1, $changes['major']);
+        $this->assertStringContainsString($expectedMessage, $changes['major'][0]);
     }
 
     public function testThrowsExceptionOnInvalidSpec(): void
@@ -305,42 +101,96 @@ YAML;
         $this->comparator->compare('invalid yaml content [[[', 'another invalid');
     }
 
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function minorChangesProvider(): array
+    {
+        return [
+            'new endpoint' => [
+                'new-endpoint',
+                'New endpoint added: /products',
+            ],
+            'new optional parameter' => [
+                'new-optional-parameter',
+                'New optional parameter added: GET /users -> filter (query)',
+            ],
+            'new response code' => [
+                'new-response-code',
+                'New response code added: GET /users -> 404',
+            ],
+            'new schema' => [
+                'new-schema',
+                'New schema added: User',
+            ],
+            'new optional schema property' => [
+                'new-optional-schema-property',
+                'New optional property added to schema: User.email',
+            ],
+        ];
+    }
+
+    /**
+     * @dataProvider minorChangesProvider
+     */
+    public function testDetectsMinorChanges(string $fixturePrefix, string $expectedMessage): void
+    {
+        $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
+        $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
+
+        $changes = $this->comparator->compare($oldSpec, $newSpec);
+
+        $this->assertEmpty($changes['major']);
+        $this->assertCount(1, $changes['minor']);
+        $this->assertStringContainsString($expectedMessage, $changes['minor'][0]);
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function patchChangesProvider(): array
+    {
+        return [
+            'description change' => [
+                'description-change',
+                'Operation description changed: GET /users',
+            ],
+            'summary change' => [
+                'summary-change',
+                'Operation summary changed: GET /users',
+            ],
+        ];
+    }
+
+    /**
+     * @dataProvider patchChangesProvider
+     */
+    public function testDetectsPatchChanges(string $fixturePrefix, string $expectedMessage): void
+    {
+        $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
+        $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
+
+        $changes = $this->comparator->compare($oldSpec, $newSpec);
+
+        $this->assertEmpty($changes['major']);
+        $this->assertEmpty($changes['minor']);
+        $this->assertCount(1, $changes['patch']);
+        $this->assertStringContainsString($expectedMessage, $changes['patch'][0]);
+    }
+
     public function testAllowsOptionalParameterRemoval(): void
     {
-        $oldSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      parameters:
-        - name: optional
-          in: query
-          required: false
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Success
-YAML;
+        $oldSpec = file_get_contents(self::FIXTURES_PATH . 'optional-parameter-removal' . self::OLD_SPEC_SUFFIX);
+        $newSpec = file_get_contents(self::FIXTURES_PATH . 'optional-parameter-removal' . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
-        $newSpec = <<<'YAML'
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.0
-paths:
-  /users:
-    get:
-      responses:
-        '200':
-          description: Success
-YAML;
+        $changes = $this->comparator->compare($oldSpec, $newSpec);
 
-        $breaks = $this->comparator->compare($oldSpec, $newSpec);
-
-        $this->assertEmpty($breaks);
+        $this->assertEmpty($changes['major']);
     }
 }

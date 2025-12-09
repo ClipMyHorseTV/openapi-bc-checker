@@ -16,7 +16,7 @@ declare(strict_types=1);
 namespace ClipMyHorse\OpenApi\BcChecker\Command;
 
 use ClipMyHorse\OpenApi\BcChecker\Exception\BcBreakException;
-use ClipMyHorse\OpenApi\BcChecker\Service\GitService;
+use ClipMyHorse\OpenApi\BcChecker\Service\Git;
 use ClipMyHorse\OpenApi\BcChecker\Service\OpenApiComparator;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -27,15 +27,15 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 class CheckBcCommand extends Command
 {
-    private GitService $gitService;
+    private Git $gitService;
     private OpenApiComparator $comparator;
 
     public function __construct(
-        ?GitService $gitService = null,
+        ?Git $gitService = null,
         ?OpenApiComparator $comparator = null
     ) {
         parent::__construct('check:bc');
-        $this->gitService = $gitService ?? new GitService();
+        $this->gitService = $gitService ?? new Git();
         $this->comparator = $comparator ?? new OpenApiComparator();
     }
 

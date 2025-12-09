@@ -19,7 +19,7 @@ use ClipMyHorse\OpenApi\BcChecker\Exception\BcBreakException;
 use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Process\Process;
 
-class GitService
+class Git
 {
     /**
      * @throws BcBreakException
@@ -84,3 +84,4 @@ class GitService
         }
     }
 }
+

@@ -16,7 +16,7 @@ declare(strict_types=1);
 namespace ClipMyHorse\OpenApi\BcChecker\Tests\Command;
 
 use ClipMyHorse\OpenApi\BcChecker\Command\CheckBcCommand;
-use ClipMyHorse\OpenApi\BcChecker\Service\GitService;
+use ClipMyHorse\OpenApi\BcChecker\Service\Git;
 use ClipMyHorse\OpenApi\BcChecker\Service\OpenApiComparator;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Application;

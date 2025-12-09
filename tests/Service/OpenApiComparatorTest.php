@@ -35,6 +35,7 @@ class OpenApiComparatorTest extends TestCase
     public function testNoBcBreaksWhenSpecsAreIdentical(): void
     {
         $spec = file_get_contents(self::FIXTURES_PATH . 'identical-spec.yaml');
+        $this->assertIsString($spec);
 
         $changes = $this->comparator->compare($spec, $spec);
 
@@ -43,6 +44,9 @@ class OpenApiComparatorTest extends TestCase
         $this->assertEmpty($changes['patch']);
     }
 
+    /**
+     * @return array<string, array{string, string}>
+     */
     public static function majorBreakingChangesProvider(): array
     {
         return [
@@ -80,6 +84,8 @@ class OpenApiComparatorTest extends TestCase
     {
         $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
         $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
         $changes = $this->comparator->compare($oldSpec, $newSpec);
 
@@ -95,6 +101,9 @@ class OpenApiComparatorTest extends TestCase
         $this->comparator->compare('invalid yaml content [[[', 'another invalid');
     }
 
+    /**
+     * @return array<string, array{string, string}>
+     */
     public static function minorChangesProvider(): array
     {
         return [
@@ -128,6 +137,8 @@ class OpenApiComparatorTest extends TestCase
     {
         $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
         $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
         $changes = $this->comparator->compare($oldSpec, $newSpec);
 
@@ -136,6 +147,9 @@ class OpenApiComparatorTest extends TestCase
         $this->assertStringContainsString($expectedMessage, $changes['minor'][0]);
     }
 
+    /**
+     * @return array<string, array{string, string}>
+     */
     public static function patchChangesProvider(): array
     {
         return [
@@ -157,6 +171,8 @@ class OpenApiComparatorTest extends TestCase
     {
         $oldSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::OLD_SPEC_SUFFIX);
         $newSpec = file_get_contents(self::FIXTURES_PATH . $fixturePrefix . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
         $changes = $this->comparator->compare($oldSpec, $newSpec);
 
@@ -170,6 +186,8 @@ class OpenApiComparatorTest extends TestCase
     {
         $oldSpec = file_get_contents(self::FIXTURES_PATH . 'optional-parameter-removal' . self::OLD_SPEC_SUFFIX);
         $newSpec = file_get_contents(self::FIXTURES_PATH . 'optional-parameter-removal' . self::NEW_SPEC_SUFFIX);
+        $this->assertIsString($oldSpec);
+        $this->assertIsString($newSpec);
 
         $changes = $this->comparator->compare($oldSpec, $newSpec);
 

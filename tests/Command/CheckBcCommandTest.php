@@ -84,7 +84,7 @@ YAML;
 
         $this->assertSame(0, $commandTester->getStatusCode());
         $this->assertStringContainsString(
-            'No backward compatibility breaking changes detected',
+            'No changes detected',
             $commandTester->getDisplay()
         );
     }
@@ -198,5 +198,110 @@ YAML;
             '--file option is required when using git mode',
             $commandTester->getDisplay()
         );
+    }
+
+    public function testSuccessWhenOnlyMinorChanges(): void
+    {
+        $oldFile = $this->fixturesDir . '/old.yaml';
+        $newFile = $this->fixturesDir . '/new.yaml';
+
+        $oldSpec = <<<'YAML'
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      responses:
+        '200':
+          description: Success
+YAML;
+
+        $newSpec = <<<'YAML'
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      responses:
+        '200':
+          description: Success
+  /products:
+    get:
+      responses:
+        '200':
+          description: Success
+YAML;
+
+        file_put_contents($oldFile, $oldSpec);
+        file_put_contents($newFile, $newSpec);
+
+        $application = new Application();
+        $application->add(new CheckBcCommand());
+
+        $command = $application->find('check:bc');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute([
+            'old' => $oldFile,
+            'new' => $newFile,
+        ]);
+
+        $this->assertSame(0, $commandTester->getStatusCode());
+        $this->assertStringContainsString('MINOR', $commandTester->getDisplay());
+        $this->assertStringContainsString('New endpoint added: /products', $commandTester->getDisplay());
+    }
+
+    public function testSuccessWhenOnlyPatchChanges(): void
+    {
+        $oldFile = $this->fixturesDir . '/old.yaml';
+        $newFile = $this->fixturesDir . '/new.yaml';
+
+        $oldSpec = <<<'YAML'
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      summary: Get users
+      responses:
+        '200':
+          description: Success
+YAML;
+
+        $newSpec = <<<'YAML'
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      summary: Retrieve all users
+      responses:
+        '200':
+          description: Success
+YAML;
+
+        file_put_contents($oldFile, $oldSpec);
+        file_put_contents($newFile, $newSpec);
+
+        $application = new Application();
+        $application->add(new CheckBcCommand());
+
+        $command = $application->find('check:bc');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute([
+            'old' => $oldFile,
+            'new' => $newFile,
+        ]);
+
+        $this->assertSame(0, $commandTester->getStatusCode());
+        $this->assertStringContainsString('PATCH', $commandTester->getDisplay());
+        $this->assertStringContainsString('Operation summary changed: GET /users', $commandTester->getDisplay());
     }
 }

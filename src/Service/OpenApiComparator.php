@@ -29,7 +29,7 @@ use ClipMyHorse\OpenApi\BcChecker\Exception\BcBreakException;
 class OpenApiComparator
 {
     /**
-     * @return array<string>
+     * @return array{major: array<string>, minor: array<string>, patch: array<string>}
      * @throws BcBreakException
      */
     public function compare(string $oldSpec, string $newSpec): array
@@ -37,12 +37,55 @@ class OpenApiComparator
         $oldOpenApi = $this->parseSpec($oldSpec);
         $newOpenApi = $this->parseSpec($newSpec);
 
-        $breaks = [];
+        $result = [
+            'major' => [],
+            'minor' => [],
+            'patch' => [],
+        ];
 
-        $breaks = array_merge($breaks, $this->compareEndpoints($oldOpenApi, $newOpenApi));
-        $breaks = array_merge($breaks, $this->compareSchemas($oldOpenApi, $newOpenApi));
+        // Detect MAJOR breaking changes
+        $result['major'] = array_merge(
+            $result['major'],
+            $this->compareEndpoints($oldOpenApi, $newOpenApi)
+        );
+        $result['major'] = array_merge(
+            $result['major'],
+            $this->compareSchemas($oldOpenApi, $newOpenApi)
+        );
 
-        return $breaks;
+        // Detect MINOR additions (backward compatible)
+        $result['minor'] = array_merge(
+            $result['minor'],
+            $this->detectNewEndpoints($oldOpenApi, $newOpenApi)
+        );
+        $result['minor'] = array_merge(
+            $result['minor'],
+            $this->detectNewParameters($oldOpenApi, $newOpenApi)
+        );
+        $result['minor'] = array_merge(
+            $result['minor'],
+            $this->detectNewResponses($oldOpenApi, $newOpenApi)
+        );
+        $result['minor'] = array_merge(
+            $result['minor'],
+            $this->detectNewSchemas($oldOpenApi, $newOpenApi)
+        );
+        $result['minor'] = array_merge(
+            $result['minor'],
+            $this->detectNewSchemaProperties($oldOpenApi, $newOpenApi)
+        );
+
+        // Detect PATCH changes (documentation/metadata)
+        $result['patch'] = array_merge(
+            $result['patch'],
+            $this->detectDocumentationChanges($oldOpenApi, $newOpenApi)
+        );
+        $result['patch'] = array_merge(
+            $result['patch'],
+            $this->detectExampleChanges($oldOpenApi, $newOpenApi)
+        );
+
+        return $result;
     }
 
     /**
@@ -407,6 +450,415 @@ class OpenApiComparator
         }
 
         return $breaks;
+    }
+
+    /**
+     * Detect new endpoints (MINOR change)
+     * @return array<string>
+     */
+    private function detectNewEndpoints(OpenApi $old, OpenApi $new): array
+    {
+        $additions = [];
+
+        if ($new->paths === null) {
+            return $additions;
+        }
+
+        foreach ($new->paths as $path => $pathItem) {
+            if ($old->paths === null || !isset($old->paths[$path])) {
+                $docPath = $this->formatPath($pathItem, $this->buildPath('paths', $path));
+                $additions[] = sprintf('New endpoint added: %s (at: %s)', $path, $docPath);
+                continue;
+            }
+
+            /** @var PathItem $oldPathItem */
+            $oldPathItem = $old->paths[$path];
+            /** @var PathItem $newPathItem */
+            $newPathItem = $pathItem;
+
+            $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
+            foreach ($methods as $method) {
+                $oldOperation = $oldPathItem->$method;
+                $newOperation = $newPathItem->$method;
+
+                if ($oldOperation === null && $newOperation !== null) {
+                    $docPath = $this->formatPath($newOperation, $this->buildPath('paths', $path, $method));
+                    $additions[] = sprintf('New operation added: %s %s (at: %s)', strtoupper($method), $path, $docPath);
+                }
+            }
+        }
+
+        return $additions;
+    }
+
+    /**
+     * Detect new optional parameters (MINOR change)
+     * @return array<string>
+     */
+    private function detectNewParameters(OpenApi $old, OpenApi $new): array
+    {
+        $additions = [];
+
+        if ($old->paths === null || $new->paths === null) {
+            return $additions;
+        }
+
+        foreach ($new->paths as $path => $newPathItem) {
+            if (!isset($old->paths[$path])) {
+                continue;
+            }
+
+            /** @var PathItem $oldPathItem */
+            $oldPathItem = $old->paths[$path];
+            /** @var PathItem $newPathItemObj */
+            $newPathItemObj = $newPathItem;
+
+            $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
+            foreach ($methods as $method) {
+                $oldOperation = $oldPathItem->$method;
+                $newOperation = $newPathItemObj->$method;
+
+                if ($oldOperation === null || $newOperation === null) {
+                    continue;
+                }
+
+                if ($newOperation->parameters === null) {
+                    continue;
+                }
+
+                foreach ($newOperation->parameters as $newParam) {
+                    if ($newParam instanceof Reference) {
+                        continue;
+                    }
+
+                    assert($newParam instanceof Parameter);
+                    $found = false;
+
+                    if ($oldOperation->parameters !== null) {
+                        foreach ($oldOperation->parameters as $oldParam) {
+                            if ($oldParam instanceof Reference) {
+                                continue;
+                            }
+
+                            assert($oldParam instanceof Parameter);
+
+                            if ($oldParam->name === $newParam->name && $oldParam->in === $newParam->in) {
+                                $found = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!$found && $newParam->required !== true) {
+                        $docPath = $this->formatPath(
+                            $newParam,
+                            $this->buildPath('paths', $path, $method, 'parameters')
+                        );
+                        $additions[] = sprintf(
+                            'New optional parameter added: %s %s -> %s (%s) (at: %s)',
+                            strtoupper($method),
+                            $path,
+                            $newParam->name,
+                            $newParam->in,
+                            $docPath
+                        );
+                    }
+                }
+            }
+        }
+
+        return $additions;
+    }
+
+    /**
+     * Detect new response codes (MINOR change)
+     * @return array<string>
+     */
+    private function detectNewResponses(OpenApi $old, OpenApi $new): array
+    {
+        $additions = [];
+
+        if ($old->paths === null || $new->paths === null) {
+            return $additions;
+        }
+
+        foreach ($new->paths as $path => $newPathItem) {
+            if (!isset($old->paths[$path])) {
+                continue;
+            }
+
+            /** @var PathItem $oldPathItem */
+            $oldPathItem = $old->paths[$path];
+            /** @var PathItem $newPathItemObj */
+            $newPathItemObj = $newPathItem;
+
+            $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
+            foreach ($methods as $method) {
+                $oldOperation = $oldPathItem->$method;
+                $newOperation = $newPathItemObj->$method;
+
+                if ($oldOperation === null || $newOperation === null) {
+                    continue;
+                }
+
+                if ($newOperation->responses === null) {
+                    continue;
+                }
+
+                foreach ($newOperation->responses as $statusCode => $newResponse) {
+                    if ($oldOperation->responses === null || !isset($oldOperation->responses[$statusCode])) {
+                        $docPath = $this->formatPath(
+                            $newResponse,
+                            $this->buildPath('paths', $path, $method, 'responses', (string)$statusCode)
+                        );
+                        $additions[] = sprintf(
+                            'New response code added: %s %s -> %s (at: %s)',
+                            strtoupper($method),
+                            $path,
+                            $statusCode,
+                            $docPath
+                        );
+                    }
+                }
+            }
+        }
+
+        return $additions;
+    }
+
+    /**
+     * Detect new schemas (MINOR change)
+     * @return array<string>
+     */
+    private function detectNewSchemas(OpenApi $old, OpenApi $new): array
+    {
+        $additions = [];
+
+        if ($new->components === null || $new->components->schemas === null) {
+            return $additions;
+        }
+
+        foreach ($new->components->schemas as $schemaName => $newSchema) {
+            if (
+                $old->components === null ||
+                $old->components->schemas === null ||
+                !isset($old->components->schemas[$schemaName])
+            ) {
+                $docPath = $this->formatPath(
+                    $newSchema,
+                    $this->buildPath('components', 'schemas', (string)$schemaName)
+                );
+                $additions[] = sprintf('New schema added: %s (at: %s)', $schemaName, $docPath);
+            }
+        }
+
+        return $additions;
+    }
+
+    /**
+     * Detect new optional schema properties (MINOR change)
+     * @return array<string>
+     */
+    private function detectNewSchemaProperties(OpenApi $old, OpenApi $new): array
+    {
+        $additions = [];
+
+        if (
+            $old->components === null ||
+            $old->components->schemas === null ||
+            $new->components === null ||
+            $new->components->schemas === null
+        ) {
+            return $additions;
+        }
+
+        foreach ($new->components->schemas as $schemaName => $newSchema) {
+            if (!isset($old->components->schemas[$schemaName])) {
+                continue;
+            }
+
+            /** @var Schema $oldSchema */
+            $oldSchema = $old->components->schemas[$schemaName];
+            /** @var Schema $newSchemaObj */
+            $newSchemaObj = $newSchema;
+
+            if ($newSchemaObj->properties === null) {
+                continue;
+            }
+
+            foreach ($newSchemaObj->properties as $propName => $newProp) {
+                if ($oldSchema->properties === null || !isset($oldSchema->properties[$propName])) {
+                    $newRequired = $newSchemaObj->required ?? [];
+                    if (!in_array($propName, $newRequired, true)) {
+                        $docPath = $this->formatPath(
+                            $newProp,
+                            $this->buildPath('components', 'schemas', (string)$schemaName, 'properties', (string)$propName)
+                        );
+                        $additions[] = sprintf(
+                            'New optional property added to schema: %s.%s (at: %s)',
+                            $schemaName,
+                            $propName,
+                            $docPath
+                        );
+                    }
+                }
+            }
+        }
+
+        return $additions;
+    }
+
+    /**
+     * Detect documentation changes (PATCH change)
+     * @return array<string>
+     */
+    private function detectDocumentationChanges(OpenApi $old, OpenApi $new): array
+    {
+        $changes = [];
+
+        // Check info description changes
+        if ($old->info !== null && $new->info !== null) {
+            if (
+                $old->info->description !== $new->info->description &&
+                $old->info->description !== null &&
+                $new->info->description !== null
+            ) {
+                $changes[] = 'API description changed';
+            }
+        }
+
+        // Check operation description/summary changes
+        if ($old->paths !== null && $new->paths !== null) {
+            foreach ($old->paths as $path => $oldPathItem) {
+                if (!isset($new->paths[$path])) {
+                    continue;
+                }
+
+                /** @var PathItem $oldPathItemObj */
+                $oldPathItemObj = $oldPathItem;
+                /** @var PathItem $newPathItem */
+                $newPathItem = $new->paths[$path];
+
+                $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
+                foreach ($methods as $method) {
+                    $oldOperation = $oldPathItemObj->$method;
+                    $newOperation = $newPathItem->$method;
+
+                    if ($oldOperation === null || $newOperation === null) {
+                        continue;
+                    }
+
+                    if (
+                        $oldOperation->description !== $newOperation->description &&
+                        $oldOperation->description !== null &&
+                        $newOperation->description !== null
+                    ) {
+                        $docPath = $this->formatPath(
+                            $newOperation,
+                            $this->buildPath('paths', $path, $method)
+                        );
+                        $changes[] = sprintf(
+                            'Operation description changed: %s %s (at: %s)',
+                            strtoupper($method),
+                            $path,
+                            $docPath
+                        );
+                    }
+
+                    if (
+                        $oldOperation->summary !== $newOperation->summary &&
+                        $oldOperation->summary !== null &&
+                        $newOperation->summary !== null
+                    ) {
+                        $docPath = $this->formatPath(
+                            $newOperation,
+                            $this->buildPath('paths', $path, $method)
+                        );
+                        $changes[] = sprintf(
+                            'Operation summary changed: %s %s (at: %s)',
+                            strtoupper($method),
+                            $path,
+                            $docPath
+                        );
+                    }
+                }
+            }
+        }
+
+        return $changes;
+    }
+
+    /**
+     * Detect example changes (PATCH change)
+     * @return array<string>
+     */
+    private function detectExampleChanges(OpenApi $old, OpenApi $new): array
+    {
+        $changes = [];
+
+        if ($old->paths === null || $new->paths === null) {
+            return $changes;
+        }
+
+        foreach ($old->paths as $path => $oldPathItem) {
+            if (!isset($new->paths[$path])) {
+                continue;
+            }
+
+            /** @var PathItem $oldPathItemObj */
+            $oldPathItemObj = $oldPathItem;
+            /** @var PathItem $newPathItem */
+            $newPathItem = $new->paths[$path];
+
+            $methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
+            foreach ($methods as $method) {
+                $oldOperation = $oldPathItemObj->$method;
+                $newOperation = $newPathItem->$method;
+
+                if ($oldOperation === null || $newOperation === null) {
+                    continue;
+                }
+
+                // Check parameter examples
+                if ($oldOperation->parameters !== null && $newOperation->parameters !== null) {
+                    foreach ($oldOperation->parameters as $idx => $oldParam) {
+                        if (
+                            $oldParam instanceof Reference ||
+                            !isset($newOperation->parameters[$idx]) ||
+                            $newOperation->parameters[$idx] instanceof Reference
+                        ) {
+                            continue;
+                        }
+
+                        assert($oldParam instanceof Parameter);
+                        assert($newOperation->parameters[$idx] instanceof Parameter);
+
+                        $newParam = $newOperation->parameters[$idx];
+
+                        if (
+                            $oldParam->name === $newParam->name &&
+                            $oldParam->example !== $newParam->example &&
+                            $oldParam->example !== null &&
+                            $newParam->example !== null
+                        ) {
+                            $docPath = $this->formatPath(
+                                $newParam,
+                                $this->buildPath('paths', $path, $method, 'parameters')
+                            );
+                            $changes[] = sprintf(
+                                'Parameter example changed: %s %s -> %s (at: %s)',
+                                strtoupper($method),
+                                $path,
+                                $oldParam->name,
+                                $docPath
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        return $changes;
     }
 
     /**

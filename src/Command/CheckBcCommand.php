@@ -126,9 +126,9 @@ class CheckBcCommand extends Command
         $io->writeln(sprintf('New: %s', $newPath));
         $io->newLine();
 
-        $breaks = $this->comparator->compare($oldContent, $newContent);
+        $changes = $this->comparator->compare($oldContent, $newContent);
 
-        return $this->displayResults($io, $breaks);
+        return $this->displayResults($io, $changes);
     }
 
     /**
@@ -167,24 +167,106 @@ class CheckBcCommand extends Command
         $oldContent = $this->gitService->getFileContentFromCommit($gitPath, $oldCommit, $filePath);
         $newContent = $this->gitService->getFileContentFromCommit($gitPath, $newCommit, $filePath);
 
-        $breaks = $this->comparator->compare($oldContent, $newContent);
+        $changes = $this->comparator->compare($oldContent, $newContent);
 
-        return $this->displayResults($io, $breaks);
+        return $this->displayResults($io, $changes);
     }
 
     /**
-     * @param array<string> $breaks
+     * @param array{major: array<string>, minor: array<string>, patch: array<string>} $changes
      */
-    private function displayResults(SymfonyStyle $io, array $breaks): int
+    private function displayResults(SymfonyStyle $io, array $changes): int
     {
-        if (count($breaks) === 0) {
-            $io->success('No backward compatibility breaking changes detected!');
+        $majorCount = count($changes['major']);
+        $minorCount = count($changes['minor']);
+        $patchCount = count($changes['patch']);
+        $totalCount = $majorCount + $minorCount + $patchCount;
+
+        if ($totalCount === 0) {
+            $io->success('No changes detected between the two specifications!');
             return Command::SUCCESS;
         }
 
-        $io->error(sprintf('Found %d backward compatibility breaking change(s):', count($breaks)));
-        $io->listing($breaks);
+        $io->section('Analysis Results');
+        $io->writeln(sprintf('Total changes detected: %d', $totalCount));
+        $io->newLine();
 
-        return Command::FAILURE;
+        // Display MAJOR breaking changes
+        if ($majorCount > 0) {
+            $io->block(
+                sprintf('MAJOR - Breaking Changes (%d)', $majorCount),
+                null,
+                'fg=white;bg=red',
+                ' ',
+                true
+            );
+            $io->listing($changes['major']);
+            $io->newLine();
+        }
+
+        // Display MINOR additions
+        if ($minorCount > 0) {
+            $io->block(
+                sprintf('MINOR - Backward Compatible Additions (%d)', $minorCount),
+                null,
+                'fg=black;bg=cyan',
+                ' ',
+                true
+            );
+            $io->listing($changes['minor']);
+            $io->newLine();
+        }
+
+        // Display PATCH changes
+        if ($patchCount > 0) {
+            $io->block(
+                sprintf('PATCH - Documentation/Metadata Changes (%d)', $patchCount),
+                null,
+                'fg=black;bg=white',
+                ' ',
+                true
+            );
+            $io->listing($changes['patch']);
+            $io->newLine();
+        }
+
+        // Display version bump recommendation
+        $this->displayVersionRecommendation($io, $majorCount, $minorCount, $patchCount);
+
+        // Return failure only if MAJOR breaking changes exist
+        if ($majorCount > 0) {
+            return Command::FAILURE;
+        }
+
+        return Command::SUCCESS;
+    }
+
+    /**
+     * Display recommended version bump based on changes
+     */
+    private function displayVersionRecommendation(
+        SymfonyStyle $io,
+        int $majorCount,
+        int $minorCount,
+        int $patchCount
+    ): void {
+        $io->section('Version Bump Recommendation');
+
+        if ($majorCount > 0) {
+            $io->writeln('<fg=red;options=bold>MAJOR version bump required (X.0.0)</>');
+            $io->writeln('Breaking changes detected that are incompatible with previous versions.');
+            $io->writeln('Example: 1.2.3 → 2.0.0');
+        } elseif ($minorCount > 0) {
+            $io->writeln('<fg=cyan;options=bold>MINOR version bump recommended (x.Y.0)</>');
+            $io->writeln('New backward-compatible functionality added.');
+            $io->writeln('Example: 1.2.3 → 1.3.0');
+        } elseif ($patchCount > 0) {
+            $io->writeln('<fg=white;options=bold>PATCH version bump recommended (x.y.Z)</>');
+            $io->writeln('Only documentation or metadata changes detected.');
+            $io->writeln('Example: 1.2.3 → 1.2.4');
+        }
+
+        $io->newLine();
+        $io->writeln('According to Semantic Versioning (https://semver.org/)');
     }
 }
